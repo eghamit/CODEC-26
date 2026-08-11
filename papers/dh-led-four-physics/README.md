@@ -7,8 +7,13 @@ recombination — with a controlled per-physics ablation quantifying each one.
 
 ## Contents
 
-- `paper.md` — the full paper draft (abstract → references). The literature review
-  (§II) sets out the research gap and the advantage of the proposed work (Table I).
+- `paper.tex` — the paper in **IEEE conference format** (`IEEEtran`, `[conference]`).
+  Compile with `pdflatex paper && pdflatex paper` (run twice for cross-references);
+  needs `figures/*.png`. The compiled `paper.pdf` (5 pages) is included.
+- `paper.pdf` — compiled output of `paper.tex`.
+- `paper.md` — the same content in Markdown (readable diff / web view). The
+  literature review (§II) sets out the research gap and the advantage of the
+  proposed work (Table I).
 - `figures/` — the five figures, regenerated from the solver:
   - `fig1_iv.png` — total + radiative I–V (full model)
   - `fig2_iqe_ablation.png` — IQE vs. current, four-config ablation (the DH advantage)
