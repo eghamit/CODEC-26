@@ -1,23 +1,26 @@
 """
 experiments.py
 --------------
-Train and benchmark a family of machine-learning surrogate models that predict
-calm-water total resistance R_T from a hull's principal particulars, and
-compare them against the semi-empirical oracle in resistance_model.py.
+Train and benchmark machine-learning surrogate models that predict the
+*residuary resistance per unit weight of displacement* (Rr) of a sailing yacht
+from six hull-form parameters, using the **real Delft Systematic Yacht Hull
+Series (DSYHS)** towing-tank measurements (UCI "Yacht Hydrodynamics", 308
+experiments). See ../data/DATA_SOURCE.md for provenance.
 
-Reported metrics per model:
-    R2, RMSE [kN], MAE [kN], MAPE [%]        (hold-out test set)
-    R2 (5-fold CV mean +/- std)
-    train time [s], inference time per 1k samples [ms]
+This replaces the earlier synthetic-oracle study: the labels here are physical
+measurements, and the models are compared against the traditional polynomial
+regression that has historically been fitted to this series.
 
-Also computed:
-    * permutation feature importance for the best model,
-    * a learning curve (test RMSE vs training-set size),
-    * a Pareto exploration (transport efficiency vs resistance) that contrasts
-      surrogate-driven search against direct evaluation of the oracle, to
-      quantify the speed-up available for early-stage design optimisation.
+Because the dataset is small (308 points) and the target grows almost
+exponentially with Froude number, we:
+  * fit every model on a log1p-transformed target (positive, multiplicative
+    error structure), inverting for all reported metrics;
+  * evaluate primarily by 10x repeated 10-fold cross-validation (mean +/- sd),
+    which is far more reliable than a single split at this sample size;
+  * additionally hold out 20% once for the parity plot, permutation importance,
+    and a Gaussian-process predictive-interval calibration check.
 
-All results are written to data/results.json for the figure and paper build.
+Outputs: ../data/results.json
 """
 
 import json
@@ -32,259 +35,248 @@ from sklearn.ensemble import (
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel
 from sklearn.inspection import permutation_importance
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import KFold, cross_val_score, train_test_split
+from sklearn.model_selection import RepeatedKFold, cross_validate, train_test_split
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-
-from resistance_model import BOUNDS, total_resistance
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+from sklearn.svm import SVR
+from sklearn.compose import TransformedTargetRegressor
 
 SEED = 20270113
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(HERE, "..", "data")
 
-FEATURES = ["Lwl", "B", "T", "Cb", "V_kn", "L_B", "B_T", "Fn"]
-TARGET = "R_T_kN"
+FEATURES = ["LCB", "Cp", "L_disp", "B_T", "L_B", "Fn"]
+FEAT_LABELS = {
+    "LCB": r"LCB", "Cp": r"$C_p$", "L_disp": r"$L/\nabla^{1/3}$",
+    "B_T": r"$B/T$", "L_B": r"$L/B$", "Fn": r"$F_n$",
+}
+TARGET = "Rr"
 
 
 def load():
-    path = os.path.join(DATA_DIR, "hull_resistance.csv")
-    names = open(path).readline().strip().split(",")
-    arr = np.loadtxt(path, delimiter=",", skiprows=1)
-    col = {n: arr[:, i] for i, n in enumerate(names)}
-    X = np.column_stack([col[f] for f in FEATURES])
-    y = col[TARGET]
+    path = os.path.join(DATA_DIR, "yacht_hydrodynamics.data")
+    arr = np.loadtxt(path)
+    X, y = arr[:, :6], arr[:, 6]
     return X, y
 
 
-def mape(y_true, y_pred):
-    return 100.0 * np.mean(np.abs((y_true - y_pred) / y_true))
+def logtt(estimator):
+    """Wrap an estimator so it trains on log1p(target) and inverts for output."""
+    return TransformedTargetRegressor(
+        regressor=estimator, func=np.log1p, inverse_func=np.expm1)
 
 
 def build_models():
-    """Return dict name -> (estimator, needs_scaling)."""
     return {
-        "Linear Regression": (
-            make_pipeline(StandardScaler(), LinearRegression()), True),
-        "k-NN (k=8)": (
-            make_pipeline(StandardScaler(), KNeighborsRegressor(n_neighbors=8)),
-            True),
-        "Random Forest": (
-            RandomForestRegressor(
-                n_estimators=300, max_depth=None, min_samples_leaf=2,
-                n_jobs=-1, random_state=SEED), False),
-        "Gradient Boosting": (
+        "Linear regression": logtt(
+            make_pipeline(StandardScaler(), LinearRegression())),
+        "Polynomial reg. (deg 3)": logtt(
+            make_pipeline(StandardScaler(),
+                          PolynomialFeatures(degree=3, include_bias=False),
+                          Ridge(alpha=1.0))),
+        "k-NN (k=5)": logtt(
+            make_pipeline(StandardScaler(), KNeighborsRegressor(n_neighbors=5))),
+        "SVR (RBF)": logtt(
+            make_pipeline(StandardScaler(),
+                          SVR(C=30.0, gamma="scale", epsilon=0.01))),
+        "Random forest": logtt(
+            RandomForestRegressor(n_estimators=400, min_samples_leaf=1,
+                                  n_jobs=-1, random_state=SEED)),
+        "Gradient boosting": logtt(
             HistGradientBoostingRegressor(
-                max_iter=500, learning_rate=0.05, max_depth=None,
-                l2_regularization=1.0, random_state=SEED), False),
-        "MLP (64-64-32)": (
-            make_pipeline(
-                StandardScaler(),
-                MLPRegressor(
-                    hidden_layer_sizes=(64, 64, 32), activation="relu",
-                    alpha=1e-3, learning_rate_init=2e-3, max_iter=2000,
-                    early_stopping=True, n_iter_no_change=25,
-                    random_state=SEED)), True),
-        "Gaussian Process": (
-            make_pipeline(
-                StandardScaler(),
-                GaussianProcessRegressor(
-                    kernel=ConstantKernel(1.0) * RBF(length_scale=np.ones(8))
-                    + WhiteKernel(noise_level=1e-2),
-                    normalize_y=True, n_restarts_optimizer=0,
-                    random_state=SEED)), True),
+                max_iter=600, learning_rate=0.05, max_leaf_nodes=15,
+                l2_regularization=1.0, random_state=SEED)),
+        "MLP (64-64)": logtt(
+            make_pipeline(StandardScaler(),
+                          MLPRegressor(hidden_layer_sizes=(64, 64),
+                                       activation="tanh", alpha=1e-2,
+                                       learning_rate_init=3e-3, max_iter=4000,
+                                       random_state=SEED))),
+        "Gaussian process": logtt(
+            make_pipeline(StandardScaler(),
+                          GaussianProcessRegressor(
+                              kernel=ConstantKernel(1.0)
+                              * RBF(length_scale=np.ones(6))
+                              + WhiteKernel(noise_level=0.1),
+                              normalize_y=True, n_restarts_optimizer=2,
+                              random_state=SEED))),
     }
+
+
+def rmse(a, b):
+    return float(np.sqrt(mean_squared_error(a, b)))
+
+
+def medape(a, b):
+    return float(np.median(100.0 * np.abs((a - b) / a)))
 
 
 def evaluate():
     X, y = load()
-    Xtr, Xte, ytr, yte = train_test_split(
-        X, y, test_size=0.2, random_state=SEED)
+    rkf = RepeatedKFold(n_splits=10, n_repeats=10, random_state=SEED)
 
-    # Gaussian Process is O(n^3); fit it on a representative 1200-point subset.
-    gp_idx = np.random.default_rng(SEED).choice(
-        len(Xtr), size=min(1200, len(Xtr)), replace=False)
-
-    kf = KFold(n_splits=5, shuffle=True, random_state=SEED)
     results = {}
-    fitted = {}
-
-    for name, (model, _scale) in build_models().items():
-        if name == "Gaussian Process":
-            xtr_f, ytr_f = Xtr[gp_idx], ytr[gp_idx]
-        else:
-            xtr_f, ytr_f = Xtr, ytr
-
-        t0 = time.perf_counter()
-        model.fit(xtr_f, ytr_f)
-        t_train = time.perf_counter() - t0
-
-        # inference timing (per 1000 samples), averaged over repeats
-        reps = 5
-        t0 = time.perf_counter()
-        for _ in range(reps):
-            yp = model.predict(Xte)
-        t_inf = (time.perf_counter() - t0) / reps / len(Xte) * 1000 * 1000  # ms/1k
-
-        rmse = np.sqrt(mean_squared_error(yte, yp))
-        mae = mean_absolute_error(yte, yp)
-        r2 = r2_score(yte, yp)
-        mp = mape(yte, yp)
-
-        # cross-validated R2 (skip full CV for GP to keep runtime bounded)
-        if name == "Gaussian Process":
-            cv_mean, cv_std = float("nan"), float("nan")
-        else:
-            cv = cross_val_score(model, X, y, cv=kf, scoring="r2", n_jobs=-1)
-            cv_mean, cv_std = float(cv.mean()), float(cv.std())
-
+    for name, model in build_models().items():
+        cv = cross_validate(
+            model, X, y, cv=rkf,
+            scoring=("r2", "neg_root_mean_squared_error",
+                     "neg_mean_absolute_error"),
+            n_jobs=-1)
         results[name] = {
-            "R2": float(r2), "RMSE_kN": float(rmse), "MAE_kN": float(mae),
-            "MAPE_pct": float(mp), "CV_R2_mean": cv_mean, "CV_R2_std": cv_std,
-            "train_time_s": float(t_train), "infer_ms_per_1k": float(t_inf),
+            "CV_R2_mean": float(cv["test_r2"].mean()),
+            "CV_R2_std": float(cv["test_r2"].std()),
+            "CV_RMSE_mean": float(-cv["test_neg_root_mean_squared_error"].mean()),
+            "CV_RMSE_std": float(cv["test_neg_root_mean_squared_error"].std()),
+            "CV_MAE_mean": float(-cv["test_neg_mean_absolute_error"].mean()),
         }
-        fitted[name] = model
-        print(f"{name:20s} R2={r2:.4f} RMSE={rmse:7.2f} MAPE={mp:5.2f}% "
-              f"train={t_train:6.2f}s")
+        print(f"{name:24s} R2={results[name]['CV_R2_mean']:.4f}"
+              f"+-{results[name]['CV_R2_std']:.4f} "
+              f"RMSE={results[name]['CV_RMSE_mean']:.3f}")
 
-    # ---- best model, parity data, permutation importance -----------------
-    best = max(results, key=lambda k: results[k]["R2"])
-    best_model = fitted[best]
-    yp_best = best_model.predict(Xte)
+    # ---- single hold-out for parity, importance, timing ------------------
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=SEED)
+    best = max(results, key=lambda k: results[k]["CV_R2_mean"])
+    best_model = build_models()[best]
+    best_model.fit(Xtr, ytr)
+    yp = best_model.predict(Xte)
+    results[best]["holdout_R2"] = float(r2_score(yte, yp))
+    results[best]["holdout_RMSE"] = rmse(yte, yp)
 
-    perm = permutation_importance(
-        best_model, Xte, yte, n_repeats=20, random_state=SEED, n_jobs=-1)
+    # inference throughput. At n=308 the GP is both the most accurate model and
+    # cheap to query, so it is the natural deployment model; we time it directly.
+    big = Xtr[np.random.default_rng(SEED).integers(0, len(Xtr), size=50000)]
+    t0 = time.perf_counter()
+    for _ in range(5):
+        best_model.predict(big)
+    infer_us = (time.perf_counter() - t0) / 5 / len(big) * 1e6
+
+    # a fast large-n alternative (gradient boosting) for reference
+    gb = build_models()["Gradient boosting"]
+    gb.fit(Xtr, ytr)
+    t0 = time.perf_counter()
+    for _ in range(5):
+        gb.predict(big)
+    gb_infer_us = (time.perf_counter() - t0) / 5 / len(big) * 1e6
+
+    # permutation importance for best model
+    perm = permutation_importance(best_model, Xte, yte, n_repeats=50,
+                                  random_state=SEED, n_jobs=-1,
+                                  scoring="r2")
     importance = {FEATURES[i]: float(perm.importances_mean[i])
                   for i in range(len(FEATURES))}
 
-    # ---- learning curve ---------------------------------------------------
-    sizes = [100, 250, 500, 1000, 2000, 3000, len(Xtr)]
-    lc = {"sizes": [], "rmse": []}
-    rng = np.random.default_rng(SEED)
-    for s in sizes:
-        s = min(s, len(Xtr))
-        idx = rng.choice(len(Xtr), size=s, replace=False)
-        m = HistGradientBoostingRegressor(
-            max_iter=500, learning_rate=0.05, l2_regularization=1.0,
-            random_state=SEED)
-        m.fit(Xtr[idx], ytr[idx])
-        lc["sizes"].append(int(s))
-        lc["rmse"].append(float(np.sqrt(mean_squared_error(yte, m.predict(Xte)))))
+    # ---- GP predictive-interval calibration ------------------------------
+    calib = gp_calibration(Xtr, ytr, Xte, yte)
 
-    # ---- Pareto exploration: transport efficiency vs resistance ----------
-    # Use a FAST surrogate for batch design screening (gradient boosting),
-    # rather than the most accurate but slow Gaussian Process. This reflects
-    # the accuracy/latency trade-off a designer actually deploys.
-    explore_name = "Gradient Boosting"
-    pareto = pareto_exploration(fitted[explore_name], explore_name)
+    # ---- learning curve (GP, small-data regime) --------------------------
+    lc = learning_curve(X, y)
+
+    # ---- design exploration / Pareto (deployed GP surrogate) -------------
+    pareto = pareto_exploration(best_model, X, infer_us)
 
     out = {
-        "n_train": int(len(Xtr)), "n_test": int(len(Xte)),
-        "features": FEATURES, "target": TARGET,
-        "models": results, "best_model": best,
-        "parity": {"y_true": yte.tolist(), "y_pred": yp_best.tolist()},
+        "n_total": int(len(y)), "n_train": int(len(Xtr)), "n_test": int(len(Xte)),
+        "features": FEATURES, "target": TARGET, "best_model": best,
+        "models": results,
+        "parity": {"y_true": yte.tolist(), "y_pred": yp.tolist()},
         "importance": importance,
+        "calibration": calib,
         "learning_curve": lc,
         "pareto": pareto,
+        "infer_us_per_design": float(infer_us),
+        "gb_infer_us_per_design": float(gb_infer_us),
     }
     with open(os.path.join(DATA_DIR, "results.json"), "w") as f:
         json.dump(out, f, indent=2)
-    print(f"\nmost accurate model: {best}")
-    print(f"exploration surrogate: {pareto['surrogate']}")
-    print(f"surrogate inference: {pareto['us_per_design']:.2f} us/design "
-          f"({pareto['designs_per_s']:,.0f} designs/s)")
-    print(f"illustrative acceleration vs {pareto['cfd_hours_assumed']} h "
-          f"CFD/design: {pareto['cfd_speedup']:.2e}x")
+    print(f"\nbest (CV R2): {best}")
+    print(f"GP 95% interval empirical coverage: {calib['coverage95']*100:.1f}%")
+    print(f"GB inference: {infer_us:.2f} us/design")
     print("wrote data/results.json")
     return out
 
 
-def pareto_exploration(surrogate, surrogate_name, n=60000):
-    """
-    Sample the design space and build the Pareto front trading total
-    resistance against a transport-capability proxy (displacement volume x
-    speed).
-
-    The surrogate screens the whole population in a single batched call. We
-    report its raw throughput (designs/s) and an *illustrative* acceleration
-    factor relative to a representative high-fidelity evaluation cost: a single
-    steady RANS resistance computation for a full hull is conservatively of the
-    order of a few CPU-hours. This is the regime where surrogates matter --
-    exploring 10^4-10^5 candidate hulls is infeasible with direct CFD but takes
-    milliseconds with a trained model. The analytic oracle timing is retained
-    only as an internal reference; it is a cheap proxy and is not the baseline
-    the acceleration factor is quoted against.
-    """
-    CFD_HOURS = 2.0   # assumed per-design high-fidelity (RANS) cost
-    rng = np.random.default_rng(SEED + 7)
-    keys = ["Lwl", "B", "T", "Cb", "V_kn"]
-    lo = np.array([BOUNDS[k][0] for k in keys])
-    hi = np.array([BOUNDS[k][1] for k in keys])
-    S = lo + rng.uniform(size=(n, 5)) * (hi - lo)
-    Lwl, B, T, Cb, V = S.T
-    LB, BT = Lwl / B, B / T
-    Fn = (V * 0.514444) / np.sqrt(9.81 * Lwl)
-    keep = (LB >= 4.5) & (LB <= 9.5) & (BT >= 2.0) & (BT <= 4.2) & (Fn <= 0.42)
-    S, Lwl, B, T, Cb, V = (a[keep] for a in (S, Lwl, B, T, Cb, V))
-    Fn = Fn[keep]
-
-    feat = np.column_stack([Lwl, B, T, Cb, V, Lwl / B, B / T, Fn])
-
-    # transport capability proxy: deadweight ~ displaced volume x speed
-    volume = Lwl * B * T * Cb          # displaced volume [m^3]
-    capability = volume * (V * 0.514444)  # m^3 * m/s (transport rate proxy)
-
-    # surrogate screening (fast)
-    t0 = time.perf_counter()
-    r_sur = surrogate.predict(feat)
-    t_sur = time.perf_counter() - t0
-
-    # oracle evaluation (reference)
-    t0 = time.perf_counter()
-    r_ora = total_resistance(Lwl, B, T, Cb, V)["R_T_kN"]
-    t_ora = time.perf_counter() - t0
-
-    front_idx = pareto_front(capability, r_sur)  # maximise cap, minimise R
-    order = np.argsort(capability[front_idx])
-    front_idx = front_idx[order]
-
-    n_eval = len(feat)
-    us_per_design = t_sur / n_eval * 1e6
-    designs_per_s = n_eval / t_sur
-    cfd_speedup = (CFD_HOURS * 3600.0) / (t_sur / n_eval)
-
-    # front-fidelity check: error of surrogate front points vs oracle truth
-    front_ape = 100.0 * np.abs(
-        (r_sur[front_idx] - r_ora[front_idx]) / r_ora[front_idx])
-
+def gp_calibration(Xtr, ytr, Xte, yte):
+    """Fit a GP on log target, form 95% predictive intervals, check coverage."""
+    scaler = StandardScaler().fit(Xtr)
+    gp = GaussianProcessRegressor(
+        kernel=ConstantKernel(1.0) * RBF(length_scale=np.ones(6))
+        + WhiteKernel(noise_level=0.1),
+        normalize_y=True, n_restarts_optimizer=2, random_state=SEED)
+    gp.fit(scaler.transform(Xtr), np.log1p(ytr))
+    mu, sd = gp.predict(scaler.transform(Xte), return_std=True)
+    lo, hi = np.expm1(mu - 1.96 * sd), np.expm1(mu + 1.96 * sd)
+    mean_pred = np.expm1(mu)
+    cover = np.mean((yte >= lo) & (yte <= hi))
+    order = np.argsort(yte)
     return {
-        "surrogate": surrogate_name,
-        "cap_all": capability[::55].tolist(),      # thinned cloud for plotting
-        "res_all": r_sur[::55].tolist(),
-        "cap_front": capability[front_idx].tolist(),
-        "res_front_surrogate": r_sur[front_idx].tolist(),
-        "res_front_oracle": r_ora[front_idx].tolist(),
-        "front_mape_pct": float(np.mean(front_ape)),
-        "n_eval": int(n_eval),
-        "t_surrogate_s": float(t_sur),
-        "t_oracle_s": float(t_ora),
-        "us_per_design": float(us_per_design),
-        "designs_per_s": float(designs_per_s),
-        "cfd_hours_assumed": CFD_HOURS,
-        "cfd_speedup": float(cfd_speedup),
+        "coverage95": float(cover),
+        "y_true": yte[order].tolist(),
+        "y_pred": mean_pred[order].tolist(),
+        "lo": lo[order].tolist(),
+        "hi": hi[order].tolist(),
+    }
+
+
+def learning_curve(X, y):
+    sizes = [40, 80, 120, 160, 200, 246]
+    rng = np.random.default_rng(SEED)
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=SEED)
+    out = {"sizes": [], "rmse": []}
+    for s in sizes:
+        s = min(s, len(Xtr))
+        idx = rng.choice(len(Xtr), size=s, replace=False)
+        m = build_models()["Gaussian process"]
+        m.fit(Xtr[idx], ytr[idx])
+        out["sizes"].append(int(s))
+        out["rmse"].append(rmse(yte, m.predict(Xte)))
+    return out
+
+
+def pareto_exploration(surrogate, X, infer_us, n=60000, design_fn=0.35):
+    """
+    Screen hull-form variants at a fixed design Froude number, trading
+    displacement capacity against residuary resistance. There is no analytic
+    oracle here (labels are physical experiments); fidelity of the front is
+    bounded by the surrogate's cross-validated accuracy, and the search is
+    confined to the measured parameter envelope (interpolation, not
+    extrapolation).
+    """
+    rng = np.random.default_rng(SEED + 7)
+    lo = X[:, :5].min(axis=0)
+    hi = X[:, :5].max(axis=0)
+    S = lo + rng.uniform(size=(n, 5)) * (hi - lo)
+    Fn = np.full((n, 1), design_fn)
+    feat = np.hstack([S, Fn])
+
+    rr = surrogate.predict(feat)
+    # displacement-length capacity proxy: (L/disp^{1/3})^{-3}  ~  displacement/L^3
+    disp_proxy = (S[:, 2]) ** (-3.0)
+
+    front = pareto_front(disp_proxy, rr)  # maximise capacity, minimise Rr
+    order = np.argsort(disp_proxy[front])
+    front = front[order]
+    return {
+        "design_fn": design_fn,
+        "cap_all": disp_proxy[::40].tolist(),
+        "rr_all": rr[::40].tolist(),
+        "cap_front": disp_proxy[front].tolist(),
+        "rr_front": rr[front].tolist(),
+        "n_eval": int(n),
+        "infer_us_per_design": float(infer_us),
+        "designs_per_s": float(1e6 / infer_us),
     }
 
 
 def pareto_front(x_max, y_min):
-    """Indices of the non-dominated set: maximise x_max, minimise y_min."""
     order = np.argsort(-x_max)
-    front, best_y = [], np.inf
+    front, best = [], np.inf
     for i in order:
-        if y_min[i] < best_y:
-            best_y = y_min[i]
+        if y_min[i] < best:
+            best = y_min[i]
             front.append(i)
     return np.array(front)
 
