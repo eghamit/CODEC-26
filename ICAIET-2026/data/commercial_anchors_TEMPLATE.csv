@@ -1,0 +1,26 @@
+# Commercial-hull high-fidelity anchor points (TEMPLATE -- fill with VERIFIED values).
+#
+# Purpose: high-fidelity anchor hulls (e.g. KCS, KVLCC2) for the multi-fidelity
+# layer, to extend/validate the surrogate beyond the yacht series. Do NOT invent
+# numbers: enter values transcribed from a primary source (e.g. the Tokyo 2015
+# CFD Workshop EFD/CFD tables, MOERI/NMRI reports) and put the citation in the
+# 'source' column. code/commercial_anchors.py converts these rows into the DSYHS
+# feature space and residuary-resistance target.
+#
+# Columns (one row per hull x speed condition):
+#   name    : hull identifier (e.g. KCS, KVLCC2)
+#   Lpp_m   : length between perpendiculars [m]
+#   B_m     : beam [m]
+#   T_m     : draft [m]
+#   Cb      : block coefficient [-]
+#   Cm      : midship-section coefficient [-]   (Cp is derived as Cb/Cm)
+#   vol_m3  : displaced volume (nabla) [m^3]
+#   S_m2    : wetted surface area [m^2]
+#   LCB_pct : longitudinal centre of buoyancy, % of Lpp fwd(+)/aft(-) of midship
+#   Fn      : Froude number of the condition [-]
+#   CT      : total resistance coefficient at this Fn [-]
+#   form_k  : form factor (1+k) used to split off friction [-]
+#   source  : primary-source citation for CT and particulars
+#
+# --- enter verified rows below this line (no rows yet) ---
+name,Lpp_m,B_m,T_m,Cb,Cm,vol_m3,S_m2,LCB_pct,Fn,CT,form_k,source

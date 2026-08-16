@@ -57,9 +57,11 @@ find that a distance-based learner ($k$-NN, $R^{2}=\num{0.41}$) fails on this
 target, a cautionary small-data result. Exercised as a design tool, the GP
 surrogate screens tens of thousands of hull variants per second, recovering a
 displacement-versus-resistance Pareto front within the measured design envelope.
-The calibrated uncertainty makes the surrogate directly usable in an
-active-learning loop that would minimise the number of expensive tank or CFD
-evaluations. The framework is relevant to the International Maritime
+A multi-fidelity extension---fusing the cheap traditional regression with scarce
+high-fidelity points by input-augmented co-kriging---further reduces error by
+about a fifth in the data-poorest regime. The calibrated uncertainty makes the
+surrogate directly usable in an active-learning loop that would minimise the
+number of expensive tank or CFD evaluations. The framework is relevant to the International Maritime
 Organization's tightening energy-efficiency regulations, where fast, low-cost
 exploration of resistance-optimal hulls is a lever for maritime decarbonisation.
 \end{abstract}
@@ -392,6 +394,38 @@ tens of thousands of hulls per second within the measured design envelope.}
 \label{fig:pareto}
 \end{figure}
 
+\subsection{Multi-fidelity fusion with a cheap engineering model}
+Where high-fidelity labels are scarce, a cheap low-fidelity model can be fused
+with the few expensive points. We treat the measured residuary resistance as
+high fidelity and the traditional Delft polynomial regression---the cheap
+engineering formula historically fitted to this series---as low fidelity, fitted
+on a disjoint ``historical'' subset so there is no leakage. A multi-fidelity
+Gaussian process appends the low-fidelity estimate as an extra input feature,
+its automatic relevance determination learning how far to trust it (co-kriging
+by input augmentation~\cite{kennedy2000,legratiet2014}).
+Figure~\ref{fig:mf} compares single- and multi-fidelity test RMSE as the
+high-fidelity budget grows. In the scarce regime---\num{8} tank points---
+multi-fidelity cuts RMSE by \SI{21}{\percent}; the benefit then narrows and
+closes once the single-fidelity GP, at roughly \num{16} points, overtakes the
+low-fidelity regression itself (dotted line) and no longer needs it. The lesson
+is that multi-fidelity pays off precisely where high-fidelity data is scarce
+relative to the response complexity---the regime of expensive commercial-hull
+CFD rather than this smooth, data-rich yacht series. This motivates
+commercial-hull high-fidelity anchors (e.g.\ KCS, KVLCC2~\cite{tokyo2015}) with
+coarse-mesh CFD as the low-fidelity source; the accompanying repository provides
+the ingestion and feature-space conversion for such anchors.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.92\columnwidth]{fig8_multifidelity.png}
+\caption{Multi-fidelity versus single-fidelity test RMSE against the number of
+high-fidelity (tank) points. Multi-fidelity helps most when high-fidelity data
+is scarcest; the gap closes once the single-fidelity GP overtakes the
+low-fidelity regression (dotted line) near \num{16} points. Bands are standard
+deviations over \num{20} random high-fidelity subsets.}
+\label{fig:mf}
+\end{figure}
+
 \section{Roadmap: Uncertainty-Aware, Multi-Fidelity, Lifecycle}
 \label{sec:roadmap}
 
@@ -406,10 +440,12 @@ optimisation~\cite{serani2016,liu2022}; our calibration result shows the require
 uncertainty is trustworthy here.
 
 \paragraph{Multi-fidelity and physics-informed models}
-Fusing many cheap empirical or potential-flow labels with a few RANS labels in a
-multi-fidelity GP, or embedding known invariants (Froude/Reynolds scaling,
-monotonicity in speed) as soft constraints, would extend accuracy beyond the
-measured envelope~\cite{raissi2019}.
+The multi-fidelity result above is the first step: extended to commercial hulls,
+it would fuse many cheap coarse-mesh CFD labels with a few fine-mesh RANS or
+tank labels for anchor hulls such as KCS and KVLCC2~\cite{tokyo2015,
+legratiet2014}. Embedding known invariants (Froude/Reynolds scaling, monotonicity
+in speed) as soft constraints would further extend accuracy beyond the measured
+envelope~\cite{raissi2019}.
 
 \paragraph{From design to lifecycle}
 A calibrated resistance surrogate is a reusable performance layer for a vessel
@@ -432,8 +468,10 @@ protocol (repeated cross-validation) is what makes them trustworthy, and larger
 or noisier data would narrow the model gaps. Fourth, the design exploration
 interpolates within the measured envelope at a single Froude number; a
 production study would sweep speed, add stability and cost objectives, and verify
-selected optima with CFD or a confirmatory tank test. None of these undermines
-the core findings---that a calibrated GP surrogate learns measured residuary
+selected optima with CFD or a confirmatory tank test. The multi-fidelity benefit
+is itself regime-specific---largest when high-fidelity data is scarce, and
+closing on this data-rich series once the single-fidelity GP surpasses the cheap
+model. None of these undermines the core findings---that a calibrated GP surrogate learns measured residuary
 resistance to $R^{2}=\num{0.999}$, beats the traditional regression, and enables
 fast design exploration---but each marks the boundary of what the present
 experiments establish.
@@ -530,6 +568,18 @@ Saf.}, vol.~209, art.~107819, 2021.
 \bibitem{raissi2019} M.~Raissi, P.~Perdikaris, and G.~E.~Karniadakis,
 ``Physics-informed neural networks,'' \emph{J. Comput. Phys.}, vol.~378,
 pp.~686--707, 2019.
+
+\bibitem{kennedy2000} M.~C.~Kennedy and A.~O'Hagan, ``Predicting the output from
+a complex computer code when fast approximations are available,''
+\emph{Biometrika}, vol.~87, no.~1, pp.~1--13, 2000.
+
+\bibitem{legratiet2014} L.~Le~Gratiet and J.~Garnier, ``Recursive co-kriging
+model for design of computer experiments with multiple levels of fidelity,''
+\emph{Int. J. Uncertain. Quantif.}, vol.~4, no.~5, pp.~365--386, 2014.
+
+\bibitem{tokyo2015} T.~Hino, F.~Stern, L.~Larsson, M.~Visonneau, N.~Hirata, and
+J.~Kim, Eds., \emph{Numerical Ship Hydrodynamics: An Assessment of the Tokyo
+2015 Workshop}. Cham, Switzerland: Springer, 2021.
 
 \bibitem{lee2021} J.~Lee, H.~Kim, and S.~Shin, ``Deep-learning-based weld-defect
 detection for shipbuilding,'' \emph{J. Mar. Sci. Eng.}, vol.~9, no.~5,
