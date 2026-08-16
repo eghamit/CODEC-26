@@ -176,6 +176,39 @@ def fig_pareto(res):
     plt.close(fig)
 
 
+# ------------------------------------------------------------------ fig 8
+def fig_multifidelity():
+    path = os.path.join(DATA, "mf_results.json")
+    if not os.path.exists(path):
+        return
+    with open(path) as f:
+        m = json.load(f)
+    s = np.array(m["sizes"])
+    sf = np.array(m["sf_rmse_mean"]); sfe = np.array(m["sf_rmse_std"])
+    mf = np.array(m["mf_rmse_mean"]); mfe = np.array(m["mf_rmse_std"])
+    fig, ax = plt.subplots(figsize=(5.6, 4.0))
+    ax.axhline(m["lf_only_rmse"], color="gray", ls=":", lw=1.4,
+               label="low-fidelity regression alone")
+    ax.plot(s, sf, "-o", color=ORANGE, ms=4, label="single-fidelity GP")
+    ax.fill_between(s, sf - sfe, sf + sfe, color=ORANGE, alpha=0.15)
+    ax.plot(s, mf, "-o", color=BLUE, ms=4, label="multi-fidelity GP")
+    ax.fill_between(s, mf - mfe, mf + mfe, color=BLUE, alpha=0.15)
+    ax.axvline(m["crossover_n"], color="black", ls="--", lw=0.9, alpha=0.6)
+    ax.set_xscale("log")
+    ax.set_xlabel("Number of high-fidelity (tank) points")
+    ax.set_ylabel(r"Test RMSE ($R_r$ units)")
+    ax.set_title("Multi-fidelity vs single-fidelity", fontsize=10)
+    ax.text(0.97, 0.95,
+            f"scarce regime ({m['scarce_budget']} pts):\n"
+            f"{m['scarce_reduction_pct']:.0f}% lower RMSE\n"
+            f"GP overtakes LF at ~{m['crossover_n']} pts",
+            transform=ax.transAxes, va="top", ha="right", fontsize=8,
+            bbox=dict(boxstyle="round", fc="white", alpha=0.85))
+    ax.legend(loc="lower left", fontsize=8)
+    fig.savefig(os.path.join(FIG, "fig8_multifidelity.png"))
+    plt.close(fig)
+
+
 def main():
     res = load_results()
     fig_data()
@@ -185,7 +218,8 @@ def main():
     fig_learning_curve(res)
     fig_calibration(res)
     fig_pareto(res)
-    print("wrote 7 figures to", FIG)
+    fig_multifidelity()
+    print("wrote 8 figures to", FIG)
 
 
 if __name__ == "__main__":

@@ -12,8 +12,8 @@ Reference style: **Math and Physical Sciences, numbered** (`sn-mathphys-num`).
 ```
 jmst-springer/
 ├── manuscript.tex        # the paper in Springer format
-├── manuscript.pdf        # compiled output (13 pages, single column)
-├── references.bib        # BibTeX bibliography (22 entries with DOIs)
+├── manuscript.pdf        # compiled output (14 pages, single column)
+├── references.bib        # BibTeX bibliography (25 entries with DOIs)
 ├── sn-jnl.cls            # Springer Nature class
 ├── sn-mathphys-num.bst   # BibTeX style used here
 └── figures/              # the seven figures (shared with the IEEE version)
@@ -44,8 +44,11 @@ pdflatex manuscript
   Yacht Hull Series, 308 experiments), benchmarked against the traditional
   polynomial regression, with calibrated Gaussian-process uncertainty — the
   substantive upgrade needed for a marine-engineering journal.
-- Remaining strengthening options a reviewer may still ask for: validation on
-  **full-form commercial-hull** data (the DSYHS is a yacht series), a
-  multi-fidelity extension fusing CFD with the experimental labels, and a
-  confirmatory CFD/tank check of a surrogate-selected optimum. These are
-  described as future work in the manuscript's roadmap and limitations sections.
+- The manuscript now includes a **multi-fidelity** result (input-augmented
+  co-kriging fusing the cheap traditional regression with scarce measured
+  points) and a documented hook to add verified **KCS/KVLCC2** commercial-hull
+  CFD anchors (`../code/commercial_anchors.py`).
+- Remaining strengthening options a reviewer may still ask for: populating the
+  commercial-hull anchors with verified Tokyo-2015 CFD/EFD values (the DSYHS is
+  a yacht series), and a confirmatory CFD/tank check of a surrogate-selected
+  optimum. These are described as future work in the roadmap and limitations.
