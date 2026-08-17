@@ -1,0 +1,20 @@
+# Commercial analog MEMS-microphone anchor points (published headline specs).
+#
+# Purpose: sanity-anchor the compact-model predictions (sensitivity, SNR) against
+# real, shipping capacitive MEMS microphones so the modelled operating range is
+# shown to be physically realistic.  These are the MARKETED headline figures from
+# each part's public datasheet; second-order/temperature-qualified values differ
+# by revision.  VERIFY every value against the current datasheet revision before
+# camera-ready (see DATA_SOURCE.md).  Do NOT invent numbers.
+#
+# Columns:
+#   part                    : manufacturer part number
+#   type                    : analog | digital
+#   sensitivity_dBV_per_Pa  : open-circuit / analog output sensitivity (dBV re 1V/Pa)
+#   snr_dBA                 : A-weighted signal-to-noise ratio (dB, ref 94 dB SPL)
+#   source                  : datasheet identifier (revision to be confirmed)
+part,type,sensitivity_dBV_per_Pa,snr_dBA,source
+Knowles SPU0410LR5H-QB,analog,-38,63,Knowles SPU0410LR5H-QB datasheet
+TDK InvenSense ICS-40740,analog,-38,70,TDK InvenSense ICS-40740 datasheet
+InvenSense INMP401,analog,-42,62,InvenSense INMP401 (ADMP401) datasheet
+Infineon IM73A135V01,analog,-38,73,Infineon IM73A135 datasheet

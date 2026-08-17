@@ -1,0 +1,89 @@
+// ===========================================================================
+//  mems_mic.va -- Verilog-A compact model of a capacitive MEMS microphone
+//
+//  A single-mode electro-mechano-acoustic macromodel for transistor-level
+//  co-simulation of the transducer with its CMOS read-out.  Derived in the
+//  accompanying paper; every branch here maps one-to-one to an equation in
+//  compact_model.py (the Python golden reference).
+//
+//  Ports
+//    top, bot : electrical terminals of the variable-gap capacitor
+//    pin      : acoustic pressure, modelled as a potential (1 V == 1 Pa)
+//
+//  Internal state (all 'electrical' nodes, reusing Kirchhoff's laws)
+//    q   : diaphragm modal deflection  (V(q) == q in metres, toward backplate)
+//    vq  : modal velocity              (V(vq) == dq/dt)
+//    pb  : back-cavity pressure        (V(pb) in Pa)
+//    xv  : vent volume displacement    (V(xv) in m^3)
+//    uv  : vent volume velocity        (V(uv) == d xv/dt)
+//
+//  Physics
+//    mechanics  : m q'' + c q' + k q = A_eff (pin - pb) + 1/2 V^2 dC/dq
+//    capacitance: C(q) = (eps A / q) ln( g0 / (g0 - q) )   (parabolic mode)
+//    cavity     : pb = (A_eff q - xv)/C_ab
+//    vent       : pb = R_av uv + M_av uv'      (uv = xv')
+//    electrical : i(top,bot) = d/dt [ C(q) V(top,bot) ]
+//
+//  Targets standard Verilog-AMS simulators (Spectre, Xyce, ADS, Questa).
+// ===========================================================================
+`include "constants.vams"
+`include "disciplines.vams"
+
+module mems_mic(top, bot, pin);
+    inout  electrical top, bot;
+    input  electrical pin;
+
+    // ---- diaphragm / electrical parameters ----
+    parameter real area   = 3.1416e-6 from (0:inf);  // diaphragm area (m^2)
+    parameter real gap    = 6.0e-6    from (0:inf);   // rest electrode gap (m)
+    parameter real eps    = 8.8541878128e-12 from (0:inf);
+    parameter real m      = 1.62e-9   from (0:inf);   // modal mass (kg)
+    parameter real c      = 5.5e-5    from [0:inf);    // modal damping (N.s/m)
+    parameter real k      = 37.7      from (0:inf);   // modal stiffness (N/m)
+    parameter real Aeff   = 1.571e-6  from (0:inf);   // effective area (m^2)
+    // ---- acoustic parameters ----
+    parameter real Cab    = 6.0e-15   from (0:inf);   // cavity acoustic compliance (m^3/Pa)
+    parameter real Rav    = 3.0e12    from [0:inf);    // vent acoustic resistance (Pa.s/m^3)
+    parameter real Mav    = 4.0e5     from [0:inf);    // vent acoustic mass (kg/m^4)
+
+    // ---- internal state nodes ----
+    electrical q, vq, pb, xv, uv;
+
+    real vtb, x, C, dCdq, Fes;
+
+    analog begin
+        vtb = V(top, bot);
+        x   = V(q) / gap;
+
+        // ---- gap capacitance and its derivative (parabolic fundamental mode)
+        // closed form  C(q) = (eps A/q) ln(g/(g-q));  series-expanded near q=0
+        if (abs(x) < 1.0e-4) begin
+            C    = eps*area/gap  * (1.0 + x/2.0 + x*x/3.0);
+            dCdq = eps*area/(gap*gap) * (0.5 + 2.0*x/3.0 + 0.75*x*x);
+        end else begin
+            C    = eps*area/V(q) * ln( gap/(gap - V(q)) );
+            dCdq = eps*area * ( V(q)/(gap - V(q)) + ln(1.0 - V(q)/gap) ) / (V(q)*V(q));
+        end
+
+        // ---- electrostatic modal force (co-energy):  Fes = 1/2 V^2 dC/dq
+        Fes = 0.5 * vtb*vtb * dCdq;
+
+        // ---- kinematic definitions
+        V(vq) <+ ddt(V(q));              // modal velocity
+        V(uv) <+ ddt(V(xv));             // vent volume velocity
+
+        // ---- mechanical modal equation (KCL at node q == force balance)
+        I(q) <+ m*ddt(V(vq)) + c*V(vq) + k*V(q)
+                - Aeff*(V(pin) - V(pb)) - Fes;
+
+        // ---- back-cavity constitutive relation:  pb = (Aeff q - xv)/Cab
+        V(pb) <+ (Aeff*V(q) - V(xv)) / Cab;
+
+        // ---- vent momentum balance (KCL at node xv drives residual to 0):
+        //      pb = Rav*uv + Mav*d(uv)/dt
+        I(xv) <+ V(pb) - Rav*V(uv) - Mav*ddt(V(uv));
+
+        // ---- electrical port: motional + static current  i = d(C*vtb)/dt
+        I(top, bot) <+ ddt( C * vtb );
+    end
+endmodule
