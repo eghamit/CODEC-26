@@ -75,14 +75,30 @@ so this whole class is representable *today*.
 | **Photonic biosensor / fluorescence detector** | labelled assays, lab-on-chip optics | needs a **photogeneration** term (extension G1) | 🔶 needs new term |
 | **Wide-bandgap ISFET (GaN/SiC)** | harsh-media, implantable, autoclavable | swap region material to `gan`/`sic`; robust surface | ✅ works today (materials in library) |
 
-**Worked example.** `examples/biosensor_isfet.py` builds the ISFET MOS-capacitor
-front-end on the built-in structured mesh, sweeps the gate through
-accumulation→depletion→inversion for a clean surface and for one carrying bound
-analyte (a +0.20 eV surface step), and extracts the **threshold shift** — the
-sensor's actual signal. It reports a +200 mV response with the expected
-near-unity coupling. The **sub-threshold slope** and the **ΔVth-per-ΔΦ
-sensitivity** are the figures of merit a real assay would be characterised on,
-and both come straight out of the sweep.
+**Worked examples.** Two levels of fidelity are provided:
+
+* `examples/biosensor_isfet.py` — the ISFET **MOS-capacitor front-end** on the
+  built-in structured mesh (no external mesher). Sweeps the gate through
+  accumulation→depletion→inversion for a clean surface and one carrying bound
+  analyte (+0.20 eV surface step) and extracts the **threshold shift** (+200 mV).
+* `examples/biosensor_isfet_transfer.py` — the **full device**: solves the
+  whole ISFET on the tuned `mosfet_v3` mesh and computes drain-current
+  **transfer curves** `I_D(V_G)` across a series of analyte steps, extracting
+  the three figures of merit an assay is actually characterised on. Measured
+  (W = 1 µm, V_D = 0.1 V):
+
+  | ΔΦ (eV) | V_th (V) | ΔV_th (mV) | SS (mV/dec) | I_on (A) |
+  |--:|--:|--:|--:|--:|
+  | +0.00 | −0.099 | 0 | 135 | 1.15e−3 |
+  | +0.10 | +0.001 | 100 | 135 | 1.09e−3 |
+  | +0.20 | +0.101 | 200 | 135 | 1.02e−3 |
+
+  Sensitivity **dV_th/dΦ = 1.000 V/V**. Two physics notes for interpretation:
+  the sub-threshold swing (~135 mV/dec, above the 60 mV/dec thermal limit)
+  reflects the short-channel geometry's weak gate control (DIBL), and the
+  *exactly unity* coupling is the ideal limit — a real ISFET is **sub-unity**
+  because of the electrolyte double layer (Debye screening) and site-binding
+  chemistry, which are the next modelling layer (extension **G-DL** below).
 
 **Key idea:** any surface-binding assay whose end effect is a **charge or dipole
 at the oxide surface** is an in-scope `ΔΦ_gate` study today. Assays whose
@@ -234,6 +250,12 @@ instance, is just a material swap on the §2 example.
   real GaN/AlGaN HEMTs and piezoelectric sensors.
 - **Th1 — Electro-thermal.** Lattice heat equation coupled through the existing
   outer self-consistency loop for self-heating and thermal sensors.
+- **G-DL — Electrolyte double layer + site-binding (biosensor gate).** A gate
+  boundary model that turns analyte binding into a *sub-unity* surface potential:
+  a site-binding/Nernst relation for the oxide–electrolyte interface and a
+  Debye-screened coupling of the biomolecule charge (Gouy–Chapman–Stern). This
+  is what makes the ISFET examples' unity coupling realistic and lets sensitivity
+  be studied vs. ionic strength / Debye length — the core of a BioFET paper.
 
 ---
 
@@ -256,11 +278,18 @@ breakdown/APD → impact-ionization; TFET → tunneling.
 
 ---
 
-### Deliverable in this exploration
+### Deliverables in this exploration
 
-`examples/biosensor_isfet.py` — a runnable, self-contained **ISFET/BioFET
-biosensor front-end** (no external mesher). It demonstrates domains **1
-(biomedical)** and **2 (sensors)** on the real solver: analyte binding →
-gate-work-function shift → extracted threshold shift (the sensor signal), with
-near-unity coupling as expected. It is the template for every surface-potential
-biosensor and chemical-sensor study listed above.
+Two runnable **ISFET/BioFET biosensor** demonstrators for domains **1
+(biomedical)** and **2 (sensors)**, both driving analyte binding → gate
+work-function shift → extracted sensor signal on the real solver:
+
+* `examples/biosensor_isfet.py` — self-contained MOS-capacitor front-end (no
+  external mesher); extracts the threshold shift.
+* `examples/biosensor_isfet_transfer.py` — full device on the `mosfet_v3` mesh;
+  computes `I_D(V_G)` transfer curves and extracts V_th shift, sub-threshold
+  swing, and the dV_th/dΦ sensitivity line (the assay figures of merit).
+
+They are the template for every surface-potential biosensor and chemical-sensor
+study listed above; extension **G-DL** is the next step toward a full BioFET
+paper (realistic sub-unity coupling, sensitivity vs. Debye length).
