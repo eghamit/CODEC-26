@@ -62,6 +62,21 @@ BioFET Debye screening (bound charge −0.01 C/m² at d = 3 nm): response falls 
 −101 mV at 1 mM to −0.25 mV at physiological ionic strength (~400× as λ_D drops
 below d).
 
+**Full device chain** (`--device`, DDM.SPC `I_D(V_G)` on the `mosfet_v3` mesh,
+V_th by constant-current over pH 4/7/10): the transistor threshold sensitivity is
+now electrolyte-limited and **sub-Nernstian**, not the ideal 59.5 mV/pH —
+
+| oxide | dV_th/dpH (device) |
+|---|--:|
+| Ta₂O₅ | 57.4 mV/pH |
+| SiO₂  | 24.6 mV/pH |
+
+confirming the chain analyte → ψ₀ → gate ΔΦ → threshold reproduces the
+electrolyte layer's sub-unity coupling at the device terminal. (Because the bare
+device coupling is unity, the electrolyte layer sets the whole response; the small
+SiO₂ offset vs. the 31.6 mV/pH surface value is the constant-current V_th fit over
+a wide 3-point pH range plus short-channel non-ideality.)
+
 > The per-oxide `(N_s, pKa, pKb)` triples in `double_layer.py` are *illustrative*
 > values chosen to reproduce the known ISFET ordering and sensitivity ranges; they
 > are meant to be re-fit to a given fabrication, not taken as material constants.
